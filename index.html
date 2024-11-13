@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一笔画游戏</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Arial', sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            text-align: center;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #007ACC;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        canvas {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-top: 20px;
+            cursor: crosshair;
+            background-color: #fafafa;
+        }
+
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .selected {
+            background-color: #007ACC;
+            color: #fff;
+        }
+
+        #custom-mode-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        #play-mode-btn {
+            background-color: #FF9800;
+            color: white;
+        }
+
+        #delete-mode-btn {
+            background-color: #E91E63;
+            color: white;
+        }
+
+        #reset-attempts-btn {
+            background-color: #F44336;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>一笔画游戏</h1>
+        <div>
+            <button id="custom-mode-btn">自定义模式</button>
+            <button id="play-mode-btn">游戏模式</button>
+            <button id="delete-mode-btn">删除模式</button>
+            <button id="reset-attempts-btn">重置尝试</button>
+        </div>
+        <canvas id="canvas" width="600" height="600"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const nodes = [];
+        const traversedEdges = new Set();
+        let mode = 'custom';
+        let selectedNode = null;
+        let isDrawing = false;
+
+        // 设置按钮的事件监听器
+        document.getElementById('custom-mode-btn').addEventListener('click', () => setMode('custom'));
+        document.getElementById('play-mode-btn').addEventListener('click', () => setMode('play'));
+        document.getElementById('delete-mode-btn').addEventListener('click', () => setMode('delete'));
+
+        document.getElementById('reset-attempts-btn').addEventListener('click', () => {
+            if (mode === 'play') {
+                traversedEdges.clear();
+                resetCanvas(); // 重置游戏尝试记录
+            }
+        });
+
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+
+        // 禁用右键菜单
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        function setMode(newMode) {
+            mode = newMode;
+            selectedNode = null;
+            isDrawing = false;
+            updateButtonStyles();
+            resetCanvas();
+        }
+
+        function updateButtonStyles() {
+            document.querySelectorAll('button').forEach(button => button.classList.remove('selected'));
+            if (mode === 'custom') {
+                document.getElementById('custom-mode-btn').classList.add('selected');
+            } else if (mode === 'play') {
+                document.getElementById('play-mode-btn').classList.add('selected');
+            } else if (mode === 'delete') {
+                document.getElementById('delete-mode-btn').classList.add('selected');
+            }
+        }
+
+        function handleMouseDown(e) {
+            const { x, y } = getMousePos(e);
+            if (mode === 'custom') {
+                handleCustomModeClick(x, y);
+            } else if (mode === 'play') {
+                startDrawing(x, y);
+            } else if (mode === 'delete') {
+                handleDeleteClick(x, y);
+            }
+        }
+
+        function handleMouseMove(e) {
+            const { x, y } = getMousePos(e);
+            if (mode === 'custom') {
+                previewNode(x, y);
+            } else if (mode === 'play') {
+                previewAndSnapLine(x, y);
+            }
+        }
+
+        function handleMouseUp() {
+            if (mode === 'play' && isDrawing) {
+                isDrawing = false;
+                selectedNode = null;
+            }
+        }
+
+        function getMousePos(event) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top
+            };
+        }
+
+        function handleCustomModeClick(x, y) {
+            const node = findNode(x, y, 20);
+            if (selectedNode && node && selectedNode !== node) {
+                addEdge(selectedNode, node);
+                selectedNode = null;
+                resetCanvas();
+            } else if (node) {
+                selectedNode = node;
+                resetCanvas();
+                drawNodes();
+                drawEdges();
+                highlightNode(selectedNode, '#007ACC');
+            } else if (!selectedNode) {
+                createNode(x, y);
+            }
+        }
+
+        function startDrawing(x, y) {
+            const node = findNode(x, y);
+            if (node) {
+                selectedNode = node;
+                isDrawing = true;
+            }
+        }
+
+        function handleDeleteClick(x, y) {
+            const node = findNode(x, y, 20);
+            if (node) {
+                // 删除节点及其所有相关连线
+                deleteNodeAndEdges(node);
+                resetCanvas();
+            } else {
+                // 检查点击位置是否在某条连线上
+                const edge = findEdge(x, y);
+                if (edge) {
+                    deleteEdge(edge[0], edge[1]);
+                    resetCanvas();
+                }
+            }
+        }
+
+        function previewAndSnapLine(x, y) {
+            if (isDrawing && selectedNode) {
+                resetCanvas();
+                drawNodes();
+                drawEdges();
+
+                ctx.strokeStyle = 'rgba(0, 122, 204, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(selectedNode.x, selectedNode.y);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+
+                const targetNode = findNode(x, y, 20);
+                if (targetNode && targetNode !== selectedNode) {
+                    markEdgeAsTraversed(selectedNode, targetNode);
+                    selectedNode = targetNode;
+                }
+            }
+        }
+
+        function previewNode(x, y) {
+            resetCanvas();
+            drawNodes();
+            drawEdges();
+            if (selectedNode) {
+                highlightNode(selectedNode, '#007ACC');
+            }
+            const node = findNode(x, y, 20);
+            if (node) {
+                ctx.fillStyle = 'rgba(0, 0, 255, 0.2)';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(0, 0, 255, 0.5)';
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function createNode(x, y) {
+            nodes.push({ x, y, edges: [] });
+            drawNodes();
+        }
+
+        function drawNodes() {
+            nodes.forEach(node => {
+                const gradient = ctx.createRadialGradient(node.x, node.y, 5, node.x, node.y, 10);
+                gradient.addColorStop(0, '#4CAF50');
+                gradient.addColorStop(1, '#388E3C');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawEdges() {
+            nodes.forEach(node => {
+                node.edges.forEach(edge => {
+                    const edgeKey = getEdgeKey(node, edge);
+                    ctx.strokeStyle = traversedEdges.has(edgeKey) ? '#FF5722' : '#B0BEC5';
+                    ctx.lineWidth = traversedEdges.has(edgeKey) ? 4 : 2;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(edge.x, edge.y);
+                    ctx.stroke();
+                });
+            });
+        }
+
+        function addEdge(node1, node2) {
+            node1.edges.push(node2);
+            node2.edges.push(node1);
+            drawEdges();
+        }
+
+        function markEdgeAsTraversed(node1, node2) {
+            const edgeKey = getEdgeKey(node1, node2);
+            traversedEdges.add(edgeKey);
+            drawEdges();
+        }
+
+        function deleteNodeAndEdges(node) {
+            nodes.splice(nodes.indexOf(node), 1);
+            nodes.forEach(n => {
+                n.edges = n.edges.filter(edge => edge !== node);
+            });
+        }
+
+        function deleteEdge(node1, node2) {
+            node1.edges = node1.edges.filter(edge => edge !== node2);
+            node2.edges = node2.edges.filter(edge => edge !== node1);
+        }
+
+        function findEdge(x, y) {
+            for (let node of nodes) {
+                for (let edge of node.edges) {
+                    if (isPointNearLine(x, y, node, edge)) {
+                        return [node, edge];
+                    }
+                }
+            }
+            return null;
+        }
+
+        function isPointNearLine(x, y, node1, node2) {
+            const distToLine = Math.abs((node2.y - node1.y) * x - (node2.x - node1.x) * y + node2.x * node1.y - node2.y * node1.x) /
+                               Math.hypot(node2.x - node1.x, node2.y - node1.y);
+            return distToLine < 5;
+        }
+
+        function getEdgeKey(node1, node2) {
+            const [id1, id2] = [nodes.indexOf(node1), nodes.indexOf(node2)].sort();
+            return `${id1}-${id2}`;
+        }
+
+        function highlightNode(node, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, 12, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function findNode(x, y, radius = 10) {
+            return nodes.find(node => Math.hypot(node.x - x, node.y - y) < radius);
+        }
+
+        function resetCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawEdges();
+            drawNodes();
+        }
+    </script>
+</body>
+</html>
